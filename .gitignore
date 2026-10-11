@@ -1,0 +1,14 @@
+# Compilados e binários
+*.exe
+*.o
+*.obj
+
+# Capturas temporárias de diagnóstico de vídeo
+frames/
+*.jpg
+*.png
+*.mp4
+*.spec
+
+# Logs
+*.log
