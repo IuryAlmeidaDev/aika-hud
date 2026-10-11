@@ -4,8 +4,8 @@
 #include <windows.h>
 #include "combat.h"
 
-#define HUD_WIDTH   330
-#define HUD_HEIGHT  410
+#define HUD_WIDTH   960
+#define HUD_HEIGHT  44
 
 void ui_init(void);
 void ui_cleanup(void);

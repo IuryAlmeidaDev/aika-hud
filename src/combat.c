@@ -12,9 +12,10 @@ static CombatState g_state = {
     .auto_heal = TRUE,
     .running = TRUE,
     .target_locked = FALSE,
+    .is_foreground = FALSE,
     .mobs_killed = 0,
     .session_start_time = 0,
-    .last_action = "Aguardando inicio [F8]",
+    .last_action = "Pronto! Pressione [F8] ou clique em ATIVAR",
     .aika_hwnd = NULL
 };
 
@@ -25,9 +26,9 @@ static CombatConfig g_config = {
     .key_skill3 = '3',       // Slot 3: Skill 3
     .key_heal = '4',         // Slot 4: Cura / Poção
     .key_loot = VK_SPACE,    // Espaço: Coleta de itens
-    .cd_skill_rot = 1000,    // 1000ms entre skills
-    .cd_basic = 600,         // 600ms entre ataques normais (aproximação contínua)
-    .cd_heal = 6000,         // 6000ms poção / cura
+    .cd_skill_rot = 900,     // 900ms entre skills
+    .cd_basic = 550,         // 550ms entre ataques normais (aproximação contínua)
+    .cd_heal = 5000,         // 5000ms poção / cura
     .loot_press_count = 2    // 2 cliques de loot ao matar o mob
 };
 
@@ -85,11 +86,11 @@ static void load_or_create_config(void) {
                 L"; Tecla de coleta de itens (Loot) - padrao SPACE\n"
                 L"KeyLoot=SPACE\n"
                 L"; Intervalo entre uso de habilidades em milissegundos\n"
-                L"SkillRotationMs=1000\n"
+                L"SkillRotationMs=900\n"
                 L"; Intervalo de reforco de ataque normal/aproximacao (ms)\n"
-                L"BasicAttackMs=600\n"
+                L"BasicAttackMs=550\n"
                 L"; Intervalo de uso de pocao/cura (ms)\n"
-                L"HealCooldownMs=6000\n"
+                L"HealCooldownMs=5000\n"
                 L"; Quantidade de vezes que pressiona loot ao derrotar monstro\n"
                 L"LootPressCount=2\n\n"
                 L"[Modulos]\n"
@@ -121,9 +122,9 @@ static void load_or_create_config(void) {
     GetPrivateProfileStringW(L"Combate", L"KeyLoot", L"SPACE", buf, 32, g_iniPath);
     g_config.key_loot = parse_key_str(buf, VK_SPACE);
 
-    g_config.cd_skill_rot = GetPrivateProfileIntW(L"Combate", L"SkillRotationMs", 1000, g_iniPath);
-    g_config.cd_basic = GetPrivateProfileIntW(L"Combate", L"BasicAttackMs", 600, g_iniPath);
-    g_config.cd_heal = GetPrivateProfileIntW(L"Combate", L"HealCooldownMs", 6000, g_iniPath);
+    g_config.cd_skill_rot = GetPrivateProfileIntW(L"Combate", L"SkillRotationMs", 900, g_iniPath);
+    g_config.cd_basic = GetPrivateProfileIntW(L"Combate", L"BasicAttackMs", 550, g_iniPath);
+    g_config.cd_heal = GetPrivateProfileIntW(L"Combate", L"HealCooldownMs", 5000, g_iniPath);
     g_config.loot_press_count = GetPrivateProfileIntW(L"Combate", L"LootPressCount", 2, g_iniPath);
 
     g_state.auto_target = GetPrivateProfileIntW(L"Modulos", L"AutoTarget", 1, g_iniPath);
@@ -150,8 +151,8 @@ HWND find_aika_window(void) {
                     if (hKernel) fnQueryW = (pfn_QueryFullProcessImageNameW)GetProcAddress(hKernel, "QueryFullProcessImageNameW");
                 }
                 if (fnQueryW) {
-                    WCHAR pathW[MAX_PATH] = {0};
-                    DWORD sz = MAX_PATH;
+                    WCHAR pathW[1024] = {0};
+                    DWORD sz = 1024;
                     if (fnQueryW(hProc, 0, pathW, &sz)) {
                         for (int i = 0; pathW[i] != L'\0'; i++) {
                             WCHAR c = pathW[i];
@@ -172,6 +173,15 @@ HWND find_aika_window(void) {
     return g_state.aika_hwnd;
 }
 
+BOOL is_aika_foreground(void) {
+    HWND fg = GetForegroundWindow();
+    if (!fg) return FALSE;
+    if (fg == g_hMainWnd) return TRUE;
+
+    HWND aika = find_aika_window();
+    return (aika && fg == aika);
+}
+
 void combat_set_action(const char *msg) {
     EnterCriticalSection(&g_state.cs);
     snprintf((char*)g_state.last_action, sizeof(g_state.last_action), "%s", msg);
@@ -187,7 +197,7 @@ CombatConfig* combat_get_config(void) {
 }
 
 // ==============================================================================
-// DETECÇÃO DE ALVO ULTRA-RÁPIDA (BITBLT MEMORY DC EM MEMÓRIA RAM)
+// DETECÇÃO DE ALVO ULTRA-PRECISA (Y = 54..62, X = 860..1060 em 1080p)
 // ==============================================================================
 BOOL is_target_locked(void) {
     HDC hdcScreen = GetDC(NULL);
@@ -196,12 +206,12 @@ BOOL is_target_locked(void) {
     int screenW = GetSystemMetrics(SM_CXSCREEN);
     int screenH = GetSystemMetrics(SM_CYSCREEN);
 
-    // Em 1080p, a barra carmesim do alvo fica centralizada em X = 960, Y = 48
+    // No Aika 1080p, a barra carmesim do alvo fica centralizada em X = 960, Y = 56..60
     int midX   = screenW / 2;
-    int barY   = (screenH == 1080) ? 48 : (int)(screenH * 0.0444f + 0.5f);
+    int startY = (screenH == 1080) ? 54 : (int)(screenH * 0.050f);
     int startX = midX - 100;
     int width  = 200;
-    int height = 5;
+    int height = 8;
 
     HDC memDC = CreateCompatibleDC(hdcScreen);
     if (!memDC) {
@@ -216,11 +226,11 @@ BOOL is_target_locked(void) {
     }
     HGDIOBJ oldBmp = SelectObject(memDC, hBmp);
 
-    // Copia apenas a fatia da barra do alvo diretamente da tela
-    BitBlt(memDC, 0, 0, width, height, hdcScreen, startX, barY - 2, SRCCOPY);
+    // Captura apenas a faixa do alvo diretamente da tela
+    BitBlt(memDC, 0, 0, width, height, hdcScreen, startX, startY, SRCCOPY);
 
-    // Amostra 5 pontos estratégicos da barra (X = 900, 940, 960, 980, 1020)
-    int sampleOffsets[5] = { 40, 80, 100, 120, 160 };
+    // Amostra 5 pontos estratégicos da barra (X = 900, 930, 960, 990, 1020)
+    int sampleOffsets[5] = { 40, 70, 100, 130, 160 };
     int redMatches = 0;
     for (int i = 0; i < 5; i++) {
         for (int y = 0; y < height; y++) {
@@ -229,8 +239,8 @@ BOOL is_target_locked(void) {
             int g = GetGValue(c);
             int b = GetBValue(c);
 
-            // Vermelho carmesim vivo da barra de vida do alvo (R > 130, G < 40, B < 40)
-            if (r > 130 && g < 40 && b < 40) {
+            // Vermelho carmesim vivo da barra de vida do monstro (R > 130, G < 45, B < 45)
+            if (r > 130 && g < 45 && b < 45) {
                 redMatches++;
                 break;
             }
@@ -246,43 +256,47 @@ BOOL is_target_locked(void) {
 }
 
 // ==============================================================================
-// BYPASS GAMEGUARD: POSTMESSAGE DIRETO + SENDINPUT HARDWARE SCANCODE
-// (SEM CHAMAR KEYBD_EVENT PARA NÃO DISPARAR O HOOK WH_KEYBOARD_LL DO GAMEGUARD)
+// ENTREGA ROBUSTA DE INPUTS (HARDWARE SCANCODE + POSTMESSAGE + KEYBD_EVENT)
 // ==============================================================================
 void send_game_key(HWND hwnd, WORD vk) {
     UINT scan = MapVirtualKeyW(vk, MAPVK_VK_TO_VSC);
     LPARAM lpDown = 1 | ((scan & 0xFF) << 16);
     LPARAM lpUp   = 1 | ((scan & 0xFF) << 16) | (1 << 30) | (1 << 31);
 
-    // 1. PostMessage direto para a fila da janela (fura hook de teclado de terceiro)
+    // 1. PostMessage direto para a fila da janela
     if (hwnd && IsWindow(hwnd)) {
         PostMessageW(hwnd, WM_KEYDOWN, vk, lpDown);
     }
 
-    // 2. SendInput com KEYEVENTF_SCANCODE (emulação pura de hardware controller)
+    // 2. SendInput com KEYEVENTF_SCANCODE (DirectInput 8 puro)
     INPUT inp;
     ZeroMemory(&inp, sizeof(INPUT));
     inp.type = INPUT_KEYBOARD;
-    inp.ki.wVk = vk;
+    inp.ki.wVk = 0;
     inp.ki.wScan = (WORD)scan;
     inp.ki.dwFlags = KEYEVENTF_SCANCODE;
     SendInput(1, &inp, sizeof(INPUT));
 
-    Sleep(45);
+    // 3. keybd_event legado
+    keybd_event((BYTE)vk, (BYTE)scan, 0, 0);
 
-    // Soltura da tecla
+    Sleep(55); // Tempo necessário para engine DirectInput registrar o frame
+
+    // Soltura
     if (hwnd && IsWindow(hwnd)) {
         PostMessageW(hwnd, WM_KEYUP, vk, lpUp);
     }
     inp.ki.dwFlags = KEYEVENTF_SCANCODE | KEYEVENTF_KEYUP;
     SendInput(1, &inp, sizeof(INPUT));
+    keybd_event((BYTE)vk, (BYTE)scan, KEYEVENTF_KEYUP, 0);
 }
 
 // ==============================================================================
-// THREAD DE COMBATE & MÁQUINA DE ESTADOS
+// THREAD DE COMBATE & AUTOMAÇÃO
 // ==============================================================================
 static DWORD WINAPI combat_thread_proc(LPVOID lpParam) {
     srand((unsigned int)time(NULL));
+    log_debug("combat_thread: Iniciada com sucesso");
 
     DWORD last_tab = 0;
     DWORD last_basic = 0;
@@ -292,7 +306,7 @@ static DWORD WINAPI combat_thread_proc(LPVOID lpParam) {
     BOOL was_locked = FALSE;
 
     while (g_state.running) {
-        // Atalhos globais via GetAsyncKeyState (sem conflitos com o sistema)
+        // Atalhos globais
         if (GetAsyncKeyState(VK_F8) & 0x8000) {
             combat_toggle_macro();
             if (g_hMainWnd) InvalidateRect(g_hMainWnd, NULL, FALSE);
@@ -319,60 +333,63 @@ static DWORD WINAPI combat_thread_proc(LPVOID lpParam) {
             break;
         }
 
+        g_state.is_foreground = is_aika_foreground();
+
         if (g_state.macro_active) {
             HWND hwnd_aika = find_aika_window();
             DWORD now = GetTickCount();
 
-            // 1. Amostra o estado atual do alvo por leitura de pixel
+            // 1. Leitura ultra-rápida do alvo na tela
             BOOL locked = is_target_locked();
             g_state.target_locked = locked;
 
-            // 2. Transição: Mob acabou de morrer (estava travado e a barra sumiu)
+            // 2. Transição: Mob derrotado (estava travado e a barra sumiu)
             if (was_locked && !locked) {
                 g_state.mobs_killed++;
                 was_locked = FALSE;
                 combat_set_action("Mob derrotado! Coletando Loot...");
+                Beep(1000, 50);
 
                 if (g_state.auto_loot) {
-                    Sleep(150);
+                    Sleep(140);
                     for (int i = 0; i < g_config.loot_press_count; i++) {
                         send_game_key(hwnd_aika, g_config.key_loot);
                         Sleep(120);
                     }
                 }
-                last_tab = 0; // Habilita busca do próximo alvo imediatamente
+                last_tab = 0; // Habilita busca imediata do próximo mob
             }
 
-            // 3. MODO BUSCA (Nenhum alvo selecionado)
+            // 3. MODO BUSCA (Sem alvo travado)
             if (!locked) {
-                if (g_state.auto_target && (now - last_tab > 1200)) {
+                if (g_state.auto_target && (now - last_tab > 1100)) {
                     combat_set_action("Buscando alvo com [TAB]...");
                     send_game_key(hwnd_aika, VK_TAB);
                     last_tab = now;
 
-                    Sleep(100);
-                    // Checa se o TAB já travou no monstro imediatamente
+                    Sleep(80);
                     if (is_target_locked()) {
                         locked = TRUE;
                         g_state.target_locked = TRUE;
-                        combat_set_action("Alvo encontrado! Correndo e atacando...");
+                        Beep(1400, 60);
+                        combat_set_action("Alvo encontrado! Correndo e atacando [5]...");
                         send_game_key(hwnd_aika, g_config.key_basic);
                         last_basic = GetTickCount();
                     }
                 }
             }
 
-            // 4. MODO COMBATE (Alvo travado com barra vermelha visível)
+            // 4. MODO COMBATE (Alvo presente)
             if (locked) {
                 was_locked = TRUE;
 
-                // 4.1. Ataque Normal Contínuo (faz o personagem correr até o mob e manter auto-ataque)
+                // 4.1. Ataque Normal (Slot 5) - aproxima o personagem e inicia golpe
                 if (now - last_basic > (DWORD)g_config.cd_basic) {
                     send_game_key(hwnd_aika, g_config.key_basic);
                     last_basic = now;
                 }
 
-                // 4.2. Rotação de Skills principais (1, 2, 3)
+                // 4.2. Rotação de Skills principais (Slot 1, 2, 3)
                 if (now - last_skill > (DWORD)g_config.cd_skill_rot) {
                     WORD current_skill = g_config.key_skill1;
                     if (skill_index == 1) current_skill = g_config.key_skill2;
@@ -388,7 +405,7 @@ static DWORD WINAPI combat_thread_proc(LPVOID lpParam) {
                     last_skill = now;
                 }
 
-                // 4.3. Auto-Cura / Poção periódica
+                // 4.3. Auto-Cura / Poção periódica (Slot 4)
                 if (g_state.auto_heal && (now - last_heal > (DWORD)g_config.cd_heal)) {
                     send_game_key(hwnd_aika, g_config.key_heal);
                     combat_set_action("Usou Pocao/Cura [Slot 4]");
@@ -396,7 +413,7 @@ static DWORD WINAPI combat_thread_proc(LPVOID lpParam) {
                 }
             }
 
-            Sleep(40 + (rand() % 21));
+            Sleep(35 + (rand() % 20));
         } else {
             Sleep(50);
         }
@@ -430,38 +447,38 @@ void combat_cleanup(void) {
 void combat_toggle_macro(void) {
     g_state.macro_active = !g_state.macro_active;
     if (g_state.macro_active) {
-        Beep(1200, 100);
+        Beep(1200, 80);
         if (g_state.session_start_time == 0) {
             g_state.session_start_time = GetTickCount();
         }
         HWND hwnd = find_aika_window();
         if (is_target_locked()) {
             send_game_key(hwnd, g_config.key_basic);
-            combat_set_action("Ativado! Alvo presente, iniciando combate");
+            combat_set_action("Ativado! Alvo presente, atacando [5]");
         } else {
             send_game_key(hwnd, VK_TAB);
-            combat_set_action("Ativado! Buscando primeiro monstro [TAB]");
+            combat_set_action("Ativado! Buscando monstro [TAB]");
         }
     } else {
-        Beep(600, 150);
+        Beep(600, 100);
         combat_set_action("Pausado pelo usuario [F8]");
     }
 }
 
 void combat_toggle_target(void) {
     g_state.auto_target = !g_state.auto_target;
-    Beep(900, 80);
+    Beep(900, 60);
     combat_set_action(g_state.auto_target ? "Auto-Target [TAB] LIGADO" : "Auto-Target [TAB] DESLIGADO");
 }
 
 void combat_toggle_loot(void) {
     g_state.auto_loot = !g_state.auto_loot;
-    Beep(900, 80);
+    Beep(900, 60);
     combat_set_action(g_state.auto_loot ? "Auto-Loot [SPACE] LIGADO" : "Auto-Loot [SPACE] DESLIGADO");
 }
 
 void combat_toggle_heal(void) {
     g_state.auto_heal = !g_state.auto_heal;
-    Beep(900, 80);
+    Beep(900, 60);
     combat_set_action(g_state.auto_heal ? "Auto-Cura [4] LIGADA" : "Auto-Cura [4] DESLIGADA");
 }

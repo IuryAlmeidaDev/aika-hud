@@ -3,32 +3,35 @@
 #include <windows.h>
 #include <stdio.h>
 #include <stdlib.h>
-
 #include "combat.h"
 #include "ui.h"
 
-#define ID_TIMER_REFRESH  1
-
-#ifndef TOKEN_QUERY
-#define TOKEN_QUERY 0x0008
+#ifndef WS_EX_LAYERED
+#define WS_EX_LAYERED 0x00080000
 #endif
 
-typedef struct _TOKEN_ELEVATION {
+#ifndef LWA_ALPHA
+#define LWA_ALPHA 0x00000002
+#endif
+
+typedef struct {
     DWORD TokenIsElevated;
 } TOKEN_ELEVATION;
 
 typedef BOOL (WINAPI *pfn_OpenProcessToken)(HANDLE, DWORD, PHANDLE);
 typedef BOOL (WINAPI *pfn_GetTokenInformation)(HANDLE, int, LPVOID, DWORD, PDWORD);
 typedef HINSTANCE (WINAPI *pfn_ShellExecuteW)(HWND, LPCWSTR, LPCWSTR, LPCWSTR, LPCWSTR, INT);
+typedef BOOL (WINAPI *pfn_SetLayeredWindowAttributes)(HWND, COLORREF, BYTE, DWORD);
 
 HWND g_hMainWnd = NULL;
+static pfn_SetLayeredWindowAttributes fn_SetLayeredWindowAttributes = NULL;
 
 static void log_debug(const char *msg) {
     FILE *f = fopen("C:\\Users\\iuryc\\aika-hud\\debug.log", "a");
     if (f) {
         SYSTEMTIME st;
         GetLocalTime(&st);
-        fprintf(f, "[%02d:%02d:%02d.%03d] %s\n", st.wHour, st.wMinute, st.wSecond, st.wMilliseconds, msg);
+        fprintf(f, "[%02d:%02d:%02d.%03d] [main] %s\n", st.wHour, st.wMinute, st.wSecond, st.wMilliseconds, msg);
         fclose(f);
     }
 }
@@ -93,10 +96,20 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lPara
     switch (msg) {
         case WM_CREATE: {
             log_debug("WndProc: WM_CREATE recebido");
+            g_hMainWnd = hWnd;
+
+            HMODULE hUser32 = GetModuleHandleA("user32.dll");
+            if (hUser32) {
+                fn_SetLayeredWindowAttributes = (pfn_SetLayeredWindowAttributes)GetProcAddress(hUser32, "SetLayeredWindowAttributes");
+                if (fn_SetLayeredWindowAttributes) {
+                    fn_SetLayeredWindowAttributes(hWnd, 0, (BYTE)(255 * 0.94f), LWA_ALPHA);
+                }
+            }
+
             ui_init();
             combat_init();
-            SetTimer(hWnd, ID_TIMER_REFRESH, 100, NULL);
-            log_debug("WM_CREATE finalizado");
+            SetTimer(hWnd, 1, 50, NULL);
+            log_debug("WM_CREATE finalizado com sucesso");
             return 0;
         }
 
@@ -108,21 +121,21 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lPara
         }
 
         case WM_TIMER: {
-            if (wParam == ID_TIMER_REFRESH) {
+            if (wParam == 1) {
+                // Mantem overlay sempre no topo de jogos DirectX Fullscreen/Borderless
+                SetWindowPos(hWnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
                 InvalidateRect(hWnd, NULL, FALSE);
             }
             return 0;
         }
 
         case WM_PAINT: {
-            log_debug("WndProc: WM_PAINT recebido - chamando ui_render");
             PAINTSTRUCT ps;
             HDC hdc = BeginPaint(hWnd, &ps);
             RECT rc;
             GetClientRect(hWnd, &rc);
             ui_render(hdc, rc.right - rc.left, rc.bottom - rc.top);
             EndPaint(hWnd, &ps);
-            log_debug("WndProc: WM_PAINT finalizado");
             return 0;
         }
 
@@ -134,7 +147,7 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lPara
 
         case WM_DESTROY: {
             log_debug("WndProc: WM_DESTROY recebido");
-            KillTimer(hWnd, ID_TIMER_REFRESH);
+            KillTimer(hWnd, 1);
             combat_cleanup();
             ui_cleanup();
             PostQuitMessage(0);
@@ -149,6 +162,12 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lPara
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdShow) {
     SetUnhandledExceptionFilter(CrashHandler);
     log_debug("WinMain: Iniciado");
+
+    if (IsProcessElevated()) {
+        log_debug("Executando com privilegios de Administrador [OK]");
+    } else {
+        log_debug("Aviso: Executando sem elevacao de Administrador");
+    }
 
     HDESK hDesk = OpenDesktopW(L"Default", 0, FALSE, GENERIC_ALL);
     if (hDesk) {
@@ -167,41 +186,40 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     wc.lpszClassName = L"GhostHUD_CombatOverlay";
 
     if (!RegisterClassExW(&wc)) {
-        char errBuf[128];
-        snprintf(errBuf, sizeof(errBuf), "RegisterClassExW falhou! Error=%lu", GetLastError());
-        log_debug(errBuf);
+        log_debug("RegisterClassExW falhou!");
         return 1;
     }
-    log_debug("RegisterClassExW bem sucedido");
 
-    int screen_w = GetSystemMetrics(SM_CXSCREEN);
-    int pos_x = screen_w - HUD_WIDTH - 24;
-    int pos_y = 60;
+    int sw = GetSystemMetrics(SM_CXSCREEN);
+    int posX = (sw - HUD_WIDTH) / 2;
+    int posY = 10; // Barra centralizada no topo da tela
 
     HWND hWnd = CreateWindowExW(
-        WS_EX_TOPMOST | WS_EX_TOOLWINDOW,
+        WS_EX_TOPMOST | WS_EX_LAYERED | WS_EX_TOOLWINDOW,
         L"GhostHUD_CombatOverlay",
         L"GhostHUD Combat Assistant",
         WS_POPUP,
-        pos_x, pos_y, HUD_WIDTH, HUD_HEIGHT,
+        posX, posY, HUD_WIDTH, HUD_HEIGHT,
         NULL, NULL, hInstance, NULL
     );
 
+    char dbgHwnd[128];
+    snprintf(dbgHwnd, sizeof(dbgHwnd), "CreateWindowExW retornou: %p, LastError: %lu", hWnd, GetLastError());
+    log_debug(dbgHwnd);
+
     if (!hWnd) {
-        char errBuf[128];
-        snprintf(errBuf, sizeof(errBuf), "CreateWindowExW falhou! Error=%lu", GetLastError());
-        log_debug(errBuf);
+        log_debug("CreateWindowExW falhou!");
         return 1;
     }
 
     g_hMainWnd = hWnd;
-
-    char hwndBuf[128];
-    snprintf(hwndBuf, sizeof(hwndBuf), "Janela criada! HWND=0x%p, Pos=(%d,%d)", hWnd, pos_x, pos_y);
-    log_debug(hwndBuf);
-
+    log_debug("Chamando ShowWindow...");
     ShowWindow(hWnd, SW_SHOWNORMAL);
+    log_debug("ShowWindow retornou!");
+
+    log_debug("Chamando UpdateWindow...");
     UpdateWindow(hWnd);
+    log_debug("UpdateWindow retornou!");
 
     log_debug("Entrando no message loop");
 
@@ -211,7 +229,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
         DispatchMessageW(&msg);
     }
 
-    log_debug("Message loop finalizado com exito");
+    log_debug("Message loop finalizado");
     return (int)msg.wParam;
 }
 

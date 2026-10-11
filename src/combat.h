@@ -18,6 +18,7 @@ typedef struct {
     volatile BOOL auto_heal;
     volatile BOOL running;
     volatile BOOL target_locked;
+    volatile BOOL is_foreground;
     volatile int  mobs_killed;
     DWORD session_start_time;
     char last_action[128];
@@ -47,6 +48,7 @@ void combat_toggle_heal(void);
 CombatState* combat_get_state(void);
 CombatConfig* combat_get_config(void);
 HWND find_aika_window(void);
+BOOL is_aika_foreground(void);
 void combat_set_action(const char *msg);
 BOOL is_target_locked(void);
 void send_game_key(HWND hwnd, WORD vk);
