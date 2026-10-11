@@ -15,8 +15,6 @@ if exist "%TCC_BIN%" (
 )
 
 if %ERRORLEVEL% equ 0 (
-    echo [OK] Embutindo manifesto de Administrador
-    python tools_inject_manifest.py
     echo [OK] Embutindo icone oficial
     python tools_inject_icon.py
 
@@ -24,10 +22,11 @@ if %ERRORLEVEL% equ 0 (
     echo [SUCESSO] AikaHUD.exe compilado com exito!
     copy /Y AikaHUD.exe "C:\Users\iuryc\Desktop\Aika_Combat_Macro.exe" >nul
     copy /Y AikaHUD.exe "C:\Users\iuryc\Desktop\AikaHUD.exe" >nul
+    copy /Y AikaHUD.exe "C:\Users\iuryc\Desktop\GhostCombat.exe" >nul
     if exist config.ini (
         copy /Y config.ini "C:\Users\iuryc\Desktop\config.ini" >nul
     )
-    echo [OK] Copiado para Area de Trabalho!
+    echo [OK] Copiado para Area de Trabalho como AikaHUD.exe e GhostCombat.exe!
     dir AikaHUD.exe
 ) else (
     echo.

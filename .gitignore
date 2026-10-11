@@ -12,3 +12,4 @@ frames/
 
 # Logs
 *.log
+__pycache__/

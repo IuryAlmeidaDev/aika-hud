@@ -33,6 +33,17 @@ static CombatConfig g_config = {
 
 static HANDLE hCombatThread = NULL;
 static WCHAR g_iniPath[MAX_PATH] = {0};
+extern HWND g_hMainWnd;
+
+static void log_debug(const char *msg) {
+    FILE *f = fopen("C:\\Users\\iuryc\\aika-hud\\debug.log", "a");
+    if (f) {
+        SYSTEMTIME st;
+        GetLocalTime(&st);
+        fprintf(f, "[%02d:%02d:%02d.%03d] [combat] %s\n", st.wHour, st.wMinute, st.wSecond, st.wMilliseconds, msg);
+        fclose(f);
+    }
+}
 
 static void init_config_path(void) {
     GetModuleFileNameW(NULL, g_iniPath, MAX_PATH);
@@ -121,12 +132,44 @@ static void load_or_create_config(void) {
 }
 
 HWND find_aika_window(void) {
-    HWND hwnd = FindWindowW(L"AikaClient Window", NULL);
-    if (!hwnd) {
-        hwnd = FindWindowW(NULL, L"AikaClient");
+    if (g_state.aika_hwnd && IsWindow(g_state.aika_hwnd)) {
+        return g_state.aika_hwnd;
     }
-    g_state.aika_hwnd = hwnd;
-    return hwnd;
+
+    HWND fg = GetForegroundWindow();
+    if (fg && fg != g_hMainWnd) {
+        DWORD pid = 0;
+        GetWindowThreadProcessId(fg, &pid);
+        if (pid != 0) {
+            HANDLE hProc = OpenProcess(0x1000, FALSE, pid);
+            if (hProc) {
+                typedef BOOL (WINAPI *pfn_QueryFullProcessImageNameW)(HANDLE, DWORD, LPWSTR, PDWORD);
+                static pfn_QueryFullProcessImageNameW fnQueryW = NULL;
+                if (!fnQueryW) {
+                    HMODULE hKernel = GetModuleHandleA("kernel32.dll");
+                    if (hKernel) fnQueryW = (pfn_QueryFullProcessImageNameW)GetProcAddress(hKernel, "QueryFullProcessImageNameW");
+                }
+                if (fnQueryW) {
+                    WCHAR pathW[MAX_PATH] = {0};
+                    DWORD sz = MAX_PATH;
+                    if (fnQueryW(hProc, 0, pathW, &sz)) {
+                        for (int i = 0; pathW[i] != L'\0'; i++) {
+                            WCHAR c = pathW[i];
+                            if ((c == L'a' || c == L'A') &&
+                                (pathW[i+1] == L'i' || pathW[i+1] == L'I') &&
+                                (pathW[i+2] == L'k' || pathW[i+2] == L'K') &&
+                                (pathW[i+3] == L'a' || pathW[i+3] == L'A')) {
+                                g_state.aika_hwnd = fg;
+                                break;
+                            }
+                        }
+                    }
+                }
+                CloseHandle(hProc);
+            }
+        }
+    }
+    return g_state.aika_hwnd;
 }
 
 void combat_set_action(const char *msg) {
@@ -249,6 +292,33 @@ static DWORD WINAPI combat_thread_proc(LPVOID lpParam) {
     BOOL was_locked = FALSE;
 
     while (g_state.running) {
+        // Atalhos globais via GetAsyncKeyState (sem conflitos com o sistema)
+        if (GetAsyncKeyState(VK_F8) & 0x8000) {
+            combat_toggle_macro();
+            if (g_hMainWnd) InvalidateRect(g_hMainWnd, NULL, FALSE);
+            Sleep(250);
+        }
+        if (GetAsyncKeyState(VK_F7) & 0x8000) {
+            combat_toggle_heal();
+            if (g_hMainWnd) InvalidateRect(g_hMainWnd, NULL, FALSE);
+            Sleep(250);
+        }
+        if (GetAsyncKeyState(VK_F9) & 0x8000) {
+            combat_toggle_target();
+            if (g_hMainWnd) InvalidateRect(g_hMainWnd, NULL, FALSE);
+            Sleep(250);
+        }
+        if (GetAsyncKeyState(VK_F10) & 0x8000) {
+            combat_toggle_loot();
+            if (g_hMainWnd) InvalidateRect(g_hMainWnd, NULL, FALSE);
+            Sleep(250);
+        }
+        if (GetAsyncKeyState(VK_F12) & 0x8000) {
+            log_debug("combat_thread: F12 pressionado! Encerrando...");
+            if (g_hMainWnd) PostMessageW(g_hMainWnd, WM_CLOSE, 0, 0);
+            break;
+        }
+
         if (g_state.macro_active) {
             HWND hwnd_aika = find_aika_window();
             DWORD now = GetTickCount();
@@ -335,10 +405,15 @@ static DWORD WINAPI combat_thread_proc(LPVOID lpParam) {
 }
 
 void combat_init(void) {
+    log_debug("combat_init: Inicializando CS...");
     InitializeCriticalSection(&g_state.cs);
+    log_debug("combat_init: Carregando config...");
     load_or_create_config();
+    log_debug("combat_init: Procurando janela do Aika...");
     find_aika_window();
+    log_debug("combat_init: Criando combat thread...");
     hCombatThread = CreateThread(NULL, 0, combat_thread_proc, NULL, 0, NULL);
+    log_debug("combat_init: Finalizado com sucesso.");
 }
 
 void combat_cleanup(void) {

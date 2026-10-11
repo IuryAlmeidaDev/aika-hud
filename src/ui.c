@@ -82,7 +82,18 @@ static void draw_toggle(HDC hdc, int x, int y, int w, int h, BOOL active) {
     DrawTextA(hdc, txt, -1, &r, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
 }
 
+static void log_debug(const char *msg) {
+    FILE *f = fopen("C:\\Users\\iuryc\\aika-hud\\debug.log", "a");
+    if (f) {
+        SYSTEMTIME st;
+        GetLocalTime(&st);
+        fprintf(f, "[%02d:%02d:%02d.%03d] [ui] %s\n", st.wHour, st.wMinute, st.wSecond, st.wMilliseconds, msg);
+        fclose(f);
+    }
+}
+
 void ui_render(HDC hdc, int width, int height) {
+    log_debug("ui_render: Iniciado");
     CombatState *state = combat_get_state();
     CombatConfig *config = combat_get_config();
 
@@ -297,6 +308,7 @@ void ui_render(HDC hdc, int width, int height) {
     SelectObject(memDC, oldBM);
     DeleteObject(memBM);
     DeleteDC(memDC);
+    log_debug("ui_render: Finalizado com sucesso");
 }
 
 void ui_handle_click(HWND hwnd, int x, int y) {
