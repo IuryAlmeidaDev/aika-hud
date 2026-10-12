@@ -5,7 +5,7 @@
 #include "combat.h"
 
 #define HUD_WIDTH   960
-#define HUD_HEIGHT  44
+#define HUD_HEIGHT  38
 
 void ui_init(void);
 void ui_cleanup(void);

@@ -192,7 +192,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 
     int sw = GetSystemMetrics(SM_CXSCREEN);
     int posX = (sw - HUD_WIDTH) / 2;
-    int posY = 10; // Barra centralizada no topo da tela
+    int posY = 4; // Barra centralizada no topo da tela
 
     HWND hWnd = CreateWindowExW(
         WS_EX_TOPMOST | WS_EX_LAYERED | WS_EX_TOOLWINDOW,
@@ -214,7 +214,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 
     g_hMainWnd = hWnd;
     log_debug("Chamando ShowWindow...");
-    ShowWindow(hWnd, SW_SHOWNORMAL);
+    ShowWindow(hWnd, SW_SHOWNOACTIVATE);
     log_debug("ShowWindow retornou!");
 
     log_debug("Chamando UpdateWindow...");
